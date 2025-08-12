@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Lyla's Game</title>
+  <title>Lyla's Game — City Track</title>
   <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
   <style>
     html, body { height: 100%; margin: 0; background:#0b1320; color:#fff; font-family: system-ui, Arial, sans-serif; touch-action: none; }
@@ -11,7 +11,7 @@
     #hud { position: fixed; inset: 0; pointer-events: none; }
     #top { margin: 10px auto 0; width: max-content; background: linear-gradient(135deg, #ff9a9e, #fad0c4);
            color:#111; padding: 8px 16px; border-radius: 20px; font-weight: 800; box-shadow: 0 4px 18px rgba(0,0,0,.35); }
-    #top .pill { background: rgba(255,255,255,.85); padding: 4px 10px; border-radius: 999px; margin: 0 6px; display:inline-block; min-width: 80px; text-align:center; }
+    #top .pill { background: rgba(255,255,255,.85); padding: 4px 10px; border-radius: 999px; margin: 0 6px; display:inline-block; min-width: 82px; text-align:center; }
     #msg { position: fixed; top: 56px; left: 50%; transform: translateX(-50%); font-weight:700; text-shadow: 0 2px 8px rgba(0,0,0,.6); }
     /* Touch controls */
     #controls { position: fixed; inset: 0; display:flex; justify-content: space-between; align-items:flex-end; padding: 14px; pointer-events: none; }
@@ -30,14 +30,18 @@
     .cta { margin-top: 10px; padding: 10px 16px; border-radius: 14px; border: 0; background:#fff; color:#111; font-weight:900; cursor:pointer; }
     /* +1 floating text */
     .float { position: fixed; color: #fff; font-weight: 900; text-shadow: 0 2px 8px rgba(0,0,0,.6); pointer-events:none; }
+    /* Mute button */
+    #mute { position: fixed; right: 10px; top: 10px; pointer-events: auto; border:0; border-radius:14px; padding:8px 10px; font-weight:900; }
   </style>
 
-  <!-- Three.js + helpers (non-module, stable version) -->
+  <!-- Three.js + helpers (non-module) -->
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/FontLoader.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/geometries/TextGeometry.js"></script>
 </head>
 <body>
+  <button id="mute">🔊 Music</button>
+
   <div id="hud">
     <div id="top">
       <span class="pill">Time: <span id="time">90</span>s</span>
@@ -58,14 +62,14 @@
       <button class="btn small" data-action="right">▶</button>
     </div>
   </div>
-  <div id="help">WASD or Arrow keys. On phones, tap buttons.</div>
+  <div id="help">WASD / Arrow keys. On phones, tap buttons.</div>
 
   <!-- Start overlay -->
   <div id="start" class="overlay">
     <div class="panel">
       <h1>Welcome to <span style="white-space:nowrap;">Lyla's Game</span></h1>
-      <p>Collect as many snacks as you can in 90 seconds.</p>
-      <p>Bumps and ditches change how the car feels. Ramps launch you.</p>
+      <p>Figure-8 city track. Collect snacks, dodge pets at crossings.</p>
+      <p>Hit a pet: <b>–1</b>. Let it cross safely: <b>+1</b> bonus.</p>
       <button id="startBtn" class="cta">Start</button>
     </div>
   </div>
@@ -74,14 +78,14 @@
   <div id="end" class="overlay" style="display:none;">
     <div class="panel">
       <h1>Time's up!</h1>
-      <div class="big"><span id="finalScore">0</span> snacks</div>
+      <div class="big"><span id="finalScore">0</span> points</div>
       <p id="endMsg"></p>
       <button id="againBtn" class="cta">Play again</button>
     </div>
   </div>
 
   <script>
-    // ====== Renderer, Scene, Camera ======
+    // ---------- Scene ----------
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(innerWidth, innerHeight);
     renderer.shadowMap.enabled = true;
@@ -89,521 +93,395 @@
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x081225);
-    const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 0.1, 1000);
-    camera.position.set(0, 10, 16);
+    const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 0.1, 2000);
+    camera.position.set(0, 14, 22);
 
-    // Lights
-    scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
     const sun = new THREE.DirectionalLight(0xffffff, 1.0);
-    sun.position.set(18, 26, 12);
-    sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
+    sun.position.set(30, 40, 20); sun.castShadow = true; sun.shadow.mapSize.set(2048,2048);
     scene.add(sun);
 
-    // ====== Arena ======
-    const bounds = { minX:-30, maxX:30, minZ:-22, maxZ:22 };
-    const W = bounds.maxX - bounds.minX;
-    const H = bounds.maxZ - bounds.minZ;
+    // ---------- Track (figure-8 city road) ----------
+    const roadWidth = 7;                // visual width of asphalt
+    const lane = roadWidth / 3;
+    const leftC = new THREE.Vector3(-12, 0, 0);
+    const rightC = new THREE.Vector3( 12, 0, 0);
+    const R = 16;                       // radius of both loops
 
     // Ground
-    const ground = new THREE.Mesh(
-      new THREE.PlaneGeometry(W, H, 1, 1),
-      new THREE.MeshStandardMaterial({ color: 0x7cc387, roughness: 0.9, metalness: 0.05 })
-    );
-    ground.rotation.x = -Math.PI/2;
-    ground.receiveShadow = true;
-    scene.add(ground);
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(100, 70), new THREE.MeshStandardMaterial({ color: 0x579d61, roughness:0.95 }));
+    ground.rotation.x = -Math.PI/2; ground.receiveShadow = true; scene.add(ground);
 
-    // Tarmac corner
-    const tarmac = new THREE.Mesh(
-      new THREE.PlaneGeometry(W*0.35, H*0.35),
-      new THREE.MeshStandardMaterial({ color: 0x3a3a3a, roughness: 1 })
-    );
-    tarmac.rotation.x = -Math.PI/2;
-    tarmac.position.set(bounds.maxX - W*0.175, 0.01, bounds.maxZ - H*0.175);
-    tarmac.receiveShadow = true;
-    scene.add(tarmac);
+    // Helper: ring road built from short quads
+    function addRing(center, radius) {
+      const segs = 48;
+      for (let i=0;i<segs;i++){
+        const a0 = (i/segs)*Math.PI*2, a1 = ((i+1)/segs)*Math.PI*2;
+        const mid = (a0+a1)/2;
+        const len = radius*(a1-a0);
+        const plane = new THREE.Mesh(
+          new THREE.PlaneGeometry(roadWidth, len),
+          new THREE.MeshStandardMaterial({ color: 0x30343a })
+        );
+        plane.rotation.x = -Math.PI/2;
+        plane.rotation.z = -mid;
+        plane.position.set(center.x + Math.cos(mid)*radius, 0.01, center.z + Math.sin(mid)*radius);
+        plane.receiveShadow = true; scene.add(plane);
 
-    // Walls
-    function wall(x, z, sx, sz) {
-      const m = new THREE.Mesh(
-        new THREE.BoxGeometry(sx, 2.5, sz),
-        new THREE.MeshStandardMaterial({ color: 0x345, metalness: 0.1, roughness: 0.8 })
-      );
-      m.position.set(x, 1.25, z);
-      m.castShadow = true; m.receiveShadow = true;
-      scene.add(m);
+        // lane lines
+        const line = new THREE.Mesh(new THREE.PlaneGeometry(0.15, len*0.9), new THREE.MeshBasicMaterial({ color: 0xffffff }));
+        line.rotation.x = -Math.PI/2; line.rotation.z = -mid;
+        line.position.copy(plane.position).add(new THREE.Vector3(Math.cos(mid)* (radius- lane), 0.02, Math.sin(mid)*(radius- lane)));
+        scene.add(line);
+      }
     }
-    wall(bounds.minX-0.5, 0, 1, H+4);
-    wall(bounds.maxX+0.5, 0, 1, H+4);
-    wall(0, bounds.minZ-0.5, W+4, 1);
-    wall(0, bounds.maxZ+0.5, W+4, 1);
+    addRing(leftC, R);
+    addRing(rightC, R);
 
-    // Decorative sign "Lyla's Game" outside walls
-    const loader = new THREE.FontLoader();
-    loader.load('https://cdn.jsdelivr.net/npm/three@0.128.0/examples/fonts/helvetiker_regular.typeface.json', function(font) {
-      const textGeom = new THREE.TextGeometry("Lyla's Game", {
-        font, size: 2.2, height: 0.5, curveSegments: 6,
-        bevelEnabled:true, bevelThickness:0.08, bevelSize:0.06, bevelSegments:3
-      });
-      const textMat = new THREE.MeshStandardMaterial({ color: 0xfff06b, emissive:0x332200, emissiveIntensity:0.35, metalness:0.2, roughness:0.4 });
-      const text = new THREE.Mesh(textGeom, textMat);
-      text.castShadow = true;
-      text.position.set(-7.5, 5, bounds.maxZ + 6.5);
-      text.rotation.y = Math.PI; // face inward
-      scene.add(text);
-
-      const signBase = new THREE.Mesh(new THREE.BoxGeometry(20, 1, 1.5), new THREE.MeshStandardMaterial({ color: 0x223 }));
-      signBase.position.set(0, 3.5, bounds.maxZ + 6.1);
-      signBase.castShadow = true; signBase.receiveShadow = true;
-      scene.add(signBase);
-
-      const signLight = new THREE.SpotLight(0xffeeaa, 2, 40, Math.PI/6, 0.3, 1);
-      signLight.position.set(0, 12, bounds.maxZ + 2.5);
-      signLight.target = text;
-      signLight.castShadow = true;
-      scene.add(signLight);
-    });
-
-    // ====== Obstacles ======
-    const ditches = [
-      { x:-12, z:-8, r:4 },
-      { x: 12, z:  6, r:5 },
-      { x:  0, z: 12, r:4.5 },
-    ];
-    ditches.forEach(({x,z,r}) => {
-      const ditch = new THREE.Mesh(
-        new THREE.CylinderGeometry(r, r, 0.3, 24),
-        new THREE.MeshStandardMaterial({ color: 0x355d3a })
-      );
-      ditch.position.set(x, 0.15, z);
-      ditch.receiveShadow = true;
-      scene.add(ditch);
-    });
-
-    const bumps = [
-      { x:-18, z: 10, r:2 },
-      { x: 20, z:-10, r:2.5 },
-      { x: -4, z: -2, r:1.8 },
-    ];
-    bumps.forEach(({x,z,r}) => {
-      const bump = new THREE.Mesh(
-        new THREE.SphereGeometry(r, 20, 12),
-        new THREE.MeshStandardMaterial({ color: 0x8fd39a })
-      );
-      bump.scale.y = 0.3;
-      bump.position.set(x, r*0.3, z);
-      bump.castShadow = true; bump.receiveShadow = true;
-      scene.add(bump);
-    });
-
-    function makeRamp(x, z, rotY=0) {
-      const geom = new THREE.ConeGeometry(2.2, 1.2, 3);
-      const mat = new THREE.MeshStandardMaterial({ color: 0x6ed2ff, metalness:0.1, roughness:0.6 });
-      const ramp = new THREE.Mesh(geom, mat);
-      ramp.rotation.y = rotY;
-      ramp.rotation.x = Math.PI;
-      ramp.position.set(x, 0.6, z);
-      ramp.castShadow = true; ramp.receiveShadow = true;
-      scene.add(ramp);
-      return { x, z, w:3.0, d:3.0, rotY, obj: ramp };
+    // Crossing tiles at the center (where rings overlap)
+    function zebra(x, z, rotY) {
+      const base = new THREE.Mesh(new THREE.PlaneGeometry(roadWidth, 4), new THREE.MeshStandardMaterial({ color: 0x2b2f35 }));
+      base.rotation.x = -Math.PI/2; base.position.set(x,0.011,z); base.rotation.z = rotY; base.receiveShadow = true; scene.add(base);
+      for (let i=0;i<7;i++){
+        const stripe = new THREE.Mesh(new THREE.PlaneGeometry(roadWidth*0.9, 0.3), new THREE.MeshBasicMaterial({ color: 0xffffff }));
+        stripe.rotation.x = -Math.PI/2; stripe.rotation.z = rotY;
+        stripe.position.set(x,0.012,z + (i-3)*0.6*Math.cos(rotY));
+        if (rotY!==0) stripe.position.set(x + (i-3)*0.6, 0.012, z);
+        scene.add(stripe);
+      }
     }
-    const ramps = [
-      makeRamp(-8, 14, Math.PI*0.1),
-      makeRamp(16,-4, -Math.PI*0.25),
-      makeRamp(-20,-12, Math.PI*0.6),
-    ];
+    zebra(0, 0, 0);         // east-west crossing
+    zebra(0, 0, Math.PI/2); // north-south crossing
 
-    // ====== Car (Yellow Mini-ish, no CapsuleGeometry to keep compatibility) ======
+    // Simple buildings (decor)
+    for (let i=0;i<20;i++){
+      const b = new THREE.Mesh(new THREE.BoxGeometry(THREE.Math.randFloat(3,6), THREE.Math.randFloat(3,10), THREE.Math.randFloat(3,6)),
+                               new THREE.MeshStandardMaterial({ color: new THREE.Color().setHSL(Math.random(),0.3,0.5) }));
+      b.position.set(THREE.Math.randFloat(-45,-22) + (Math.random()<.5?0: THREEMath=0), b.geometry.parameters.height/2, THREE.Math.randFloat(-30,30));
+      if (Math.random()<0.5) b.position.x = THREE.Math.randFloat(22,45);
+      b.castShadow = true; b.receiveShadow = true; scene.add(b);
+    }
+
+    // ---------- Car (yellow mini-ish) ----------
     const car = new THREE.Group();
     const bodyMat = new THREE.MeshStandardMaterial({ color: 0xffdf00, metalness: 0.3, roughness: 0.4 });
     const roofMat = new THREE.MeshStandardMaterial({ color: 0x111111, metalness: 0.2, roughness: 0.7 });
-
-    const body = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.6, 2.6), bodyMat);
-    body.position.y = 0.55; body.castShadow = true; car.add(body);
-
-    // Rounded ends using scaled spheres
-    const nose = new THREE.Mesh(new THREE.SphereGeometry(0.7, 16, 12), bodyMat);
-    nose.scale.set(1, 0.8, 1); nose.position.set(0, 0.55, 1.25); car.add(nose);
-    const tail = new THREE.Mesh(new THREE.SphereGeometry(0.7, 16, 12), bodyMat);
-    tail.scale.set(1, 0.8, 1); tail.position.set(0, 0.55, -1.25); car.add(tail);
-
-    const roof = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.2, 1.6), roofMat);
-    roof.position.y = 1.0; car.add(roof);
-
-    function wheel(x, z) {
-      const w = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, 0.24, 16), new THREE.MeshStandardMaterial({ color: 0x222222 }));
-      w.rotation.z = Math.PI/2;
-      w.position.set(x, 0.35, z);
-      w.castShadow = true;
-      car.add(w);
-      return w;
-    }
-    wheel(-0.8,  1.0); wheel(0.8,  1.0);
-    wheel(-0.8, -1.0); wheel(0.8, -1.0);
-
-    // Plate "LYLA"
-    const plate = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.18, 0.02), new THREE.MeshStandardMaterial({ color: 0xffffff, emissive:0x222222, emissiveIntensity:0.2 }));
-    plate.position.set(0, 0.42, -1.35); car.add(plate);
-    const plateText = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.12, 0.01), new THREE.MeshStandardMaterial({ color: 0x111111 }));
-    plateText.position.set(0, 0.42, -1.335); car.add(plateText);
-
-    car.position.set(0, 0.5, 0);
+    const body = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.6, 2.6), bodyMat); body.position.y = 0.55; body.castShadow = true; car.add(body);
+    const nose = new THREE.Mesh(new THREE.SphereGeometry(0.7, 16, 12), bodyMat); nose.scale.set(1,0.8,1); nose.position.set(0,0.55, 1.25); car.add(nose);
+    const tail = new THREE.Mesh(new THREE.SphereGeometry(0.7, 16, 12), bodyMat); tail.scale.set(1,0.8,1); tail.position.set(0,0.55,-1.25); car.add(tail);
+    const roof = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.2, 1.6), roofMat); roof.position.y = 1.0; car.add(roof);
+    function wheel(x,z){ const w = new THREE.Mesh(new THREE.CylinderGeometry(0.35,0.35,0.24,16), new THREE.MeshStandardMaterial({color:0x222}));
+      w.rotation.z=Math.PI/2; w.position.set(x,0.35,z); w.castShadow=true; car.add(w); }
+    wheel(-0.8, 1.0); wheel(0.8, 1.0); wheel(-0.8,-1.0); wheel(0.8,-1.0);
     scene.add(car);
 
-    // ====== Snacks ======
-    const snackTypes = ['burger', 'bar', 'candy'];
-    const snacks = [];
-    const snackCount = 24;
+    // ---------- Snacks ----------
+    const snackTypes=['burger','bar','ice'];
+    function makeBurger(){ const g=new THREE.Group();
+      const bunTop=new THREE.Mesh(new THREE.SphereGeometry(0.35,16,12), new THREE.MeshStandardMaterial({color:0xffc27a,roughness:0.7})); bunTop.scale.y=.55; bunTop.position.y=.26; g.add(bunTop);
+      const patty=new THREE.Mesh(new THREE.CylinderGeometry(0.36,0.36,0.16,16), new THREE.MeshStandardMaterial({color:0x5a2f18})); patty.position.y=.1; g.add(patty);
+      const bunBot=new THREE.Mesh(new THREE.CylinderGeometry(0.38,0.38,0.16,16), new THREE.MeshStandardMaterial({color:0xffc27a,roughness:0.7})); bunBot.position.y=.02; g.add(bunBot);
+      const cheese=new THREE.Mesh(new THREE.BoxGeometry(0.5,0.04,0.5), new THREE.MeshStandardMaterial({color:0xfff06b})); cheese.position.y=.18; g.add(cheese); return g; }
+    function makeBar(){ const g=new THREE.Group();
+      const bar=new THREE.Mesh(new THREE.BoxGeometry(0.8,0.18,0.35), new THREE.MeshStandardMaterial({color:0x6b3f1d})); bar.position.y=.12; g.add(bar);
+      const wrap=new THREE.Mesh(new THREE.BoxGeometry(0.85,0.02,0.4), new THREE.MeshStandardMaterial({color:0xff6ec7, emissive:0x540a3a, emissiveIntensity:0.2})); wrap.position.y=.22; g.add(wrap); return g; }
+    function makeIce(){ const g=new THREE.Group();
+      const scoop=new THREE.Mesh(new THREE.SphereGeometry(0.32,18,12), new THREE.MeshStandardMaterial({color:0xffb3d1})); scoop.position.y=.35; g.add(scoop);
+      const cone=new THREE.Mesh(new THREE.ConeGeometry(0.22,0.5,12), new THREE.MeshStandardMaterial({color:0xd8a064})); cone.position.y=.06; cone.rotation.x=Math.PI; g.add(cone);
+      return g; }
 
-    function createBurger() {
-      const group = new THREE.Group();
-      const bunTop = new THREE.Mesh(new THREE.SphereGeometry(0.35, 16, 12), new THREE.MeshStandardMaterial({ color: 0xffc27a, roughness:0.7 }));
-      bunTop.scale.y = 0.55; bunTop.position.y = 0.26; group.add(bunTop);
-      const patty = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.36, 0.16, 16), new THREE.MeshStandardMaterial({ color: 0x5a2f18 }));
-      patty.position.y = 0.1; group.add(patty);
-      const bunBot = new THREE.Mesh(new THREE.CylinderGeometry(0.38, 0.38, 0.16, 16), new THREE.MeshStandardMaterial({ color: 0xffc27a, roughness:0.7 }));
-      bunBot.position.y = 0.02; group.add(bunBot);
-      const cheese = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.04, 0.5), new THREE.MeshStandardMaterial({ color: 0xfff06b }));
-      cheese.position.y = 0.18; group.add(cheese);
-      return group;
+    function randomOnRoad(){
+      // sample point near either ring with width +/- roadWidth/2
+      const useRight = Math.random()<0.5;
+      const c = useRight? rightC : leftC;
+      const angle = Math.random()*Math.PI*2;
+      const offset = THREE.Math.randFloat(-roadWidth*0.35, roadWidth*0.35);
+      const r = R + offset;
+      return new THREE.Vector3(c.x + Math.cos(angle)*r, 0.02, c.z + Math.sin(angle)*r);
     }
-    function createBar() {
-      const group = new THREE.Group();
-      const bar = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.18, 0.35), new THREE.MeshStandardMaterial({ color: 0x6b3f1d }));
-      bar.position.y = 0.12; group.add(bar);
-      const wrap = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.02, 0.4), new THREE.MeshStandardMaterial({ color: 0xff6ec7, emissive:0x540a3a, emissiveIntensity:0.2 }));
-      wrap.position.y = 0.22; group.add(wrap);
-      return group;
-    }
-    function createCandy() {
-      const group = new THREE.Group();
-      const core = new THREE.Mesh(new THREE.SphereGeometry(0.28, 18, 12), new THREE.MeshStandardMaterial({ color: 0x92f5ff, emissive:0x206a77, emissiveIntensity:0.2 }));
-      core.position.y = 0.25; group.add(core);
-      const coneMat = new THREE.MeshStandardMaterial({ color: 0xffa6e7, metalness:0.1, roughness:0.5 });
-      const left = new THREE.Mesh(new THREE.ConeGeometry(0.18, 0.35, 12), coneMat);
-      left.rotation.z = Math.PI/2; left.position.set(-0.38, 0.26, 0); group.add(left);
-      const right = left.clone(); right.position.x = 0.38; right.rotation.z = -Math.PI/2; group.add(right);
-      return group;
-    }
-    function createSnack() {
-      const t = snackTypes[(Math.random()*snackTypes.length)|0];
-      let g;
-      if (t === 'burger') g = createBurger();
-      else if (t === 'bar') g = createBar();
-      else g = createCandy();
-      const base = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, 0.02, 12), new THREE.MeshStandardMaterial({ color: 0xffffff, emissive:0x333333, emissiveIntensity:0.1 }));
-      g.add(base);
-      g.castShadow = true;
-      return g;
-    }
-    function randomInArena(margin=2.5) {
-      return [
-        THREE.Math.randFloat(bounds.minX+margin, bounds.maxX-margin),
-        THREE.Math.randFloat(bounds.minZ+margin, bounds.maxZ-margin)
-      ];
-    }
-    function placeSnacks() {
-      snacks.forEach(s => scene.remove(s.group));
-      snacks.length = 0;
-      for (let i=0;i<snackCount;i++) {
-        const group = createSnack();
-        const p = randomInArena(3.5);
-        group.position.set(p[0], 0.02, p[1]);
-        scene.add(group);
-        snacks.push({ group, active:true, spin: (Math.random()*0.6+0.6) });
+
+    const snacks=[]; const snackCount=28;
+    function placeSnacks(){
+      snacks.forEach(s=> scene.remove(s.group));
+      snacks.length=0;
+      for (let i=0;i<snackCount;i++){
+        const type = snackTypes[(Math.random()*snackTypes.length)|0];
+        const g = type==='burger'? makeBurger() : type==='bar'? makeBar() : makeIce();
+        const p = randomOnRoad(); g.position.copy(p);
+        const base = new THREE.Mesh(new THREE.CylinderGeometry(0.35,0.35,0.02,12), new THREE.MeshStandardMaterial({color:0xffffff, emissive:0x333, emissiveIntensity:0.1}));
+        g.add(base); g.castShadow=true; scene.add(g);
+        snacks.push({group:g, active:true, spin: (Math.random()*0.6+0.6)});
       }
     }
 
-    // ====== Input ======
+    // ---------- Pets (cats & dogs crossing zebras) ----------
+    function makePet(isDog){
+      const g=new THREE.Group();
+      const body=new THREE.Mesh(new THREE.BoxGeometry(0.7,0.35,0.3), new THREE.MeshStandardMaterial({color:isDog?0x9c6f4a:0x666666}));
+      body.position.y=0.3; g.add(body);
+      const head=new THREE.Mesh(new THREE.SphereGeometry(0.18,16,12), new THREE.MeshStandardMaterial({color:isDog?0x9c6f4a:0x666666}));
+      head.position.set(0.33,0.5,0); g.add(head);
+      const ear=new THREE.Mesh(new THREE.ConeGeometry(0.07,0.12,8), new THREE.MeshStandardMaterial({color:0x333}));
+      ear.position.set(0.42,0.6,0.08); g.add(ear); const ear2=ear.clone(); ear2.position.z=-0.08; g.add(ear2);
+      return g;
+    }
+    const crossings = [
+      { a:new THREE.Vector3(-roadWidth*0.6, 0.02, 0), b:new THREE.Vector3( roadWidth*0.6, 0.02, 0), rot:0 },
+      { a:new THREE.Vector3(0, 0.02, -roadWidth*0.6), b:new THREE.Vector3(0, 0.02,  roadWidth*0.6), rot:Math.PI/2 },
+    ];
+    const pets=[]; // {mesh, t, speed, start, end, alive, clean}
+    function spawnPet(idx){
+      const isDog = Math.random()<0.5;
+      const m = makePet(isDog);
+      const c = crossings[idx];
+      const start = c.a.clone(), end = c.b.clone();
+      m.position.copy(start); m.rotation.y = c.rot;
+      scene.add(m);
+      pets.push({ mesh:m, t:0, speed: (Math.random()*0.4+0.5), start, end, alive:true, clean:true, idx });
+    }
+    function maybeSpawnPets(dt){
+      // small chance each second; limit total on screen
+      if (pets.length<3 && Math.random() < 0.02){
+        spawnPet((Math.random()<0.5)?0:1);
+      }
+    }
+
+    // ---------- Input ----------
     const keys = new Set();
     addEventListener('keydown', e => { keys.add(e.code); });
     addEventListener('keyup',   e => { keys.delete(e.code); });
 
     const pressed = { accel:false, brake:false, left:false, right:false };
-    const btns = document.querySelectorAll('.btn');
-    const pointerMap = new Map();
-    function setPressed(action, val) { pressed[action] = val; }
-    btns.forEach(btn => {
+    const pointerMap=new Map();
+    document.querySelectorAll('.btn').forEach(btn=>{
       const action = btn.dataset.action;
-      btn.addEventListener('pointerdown', e => {
-        btn.setPointerCapture(e.pointerId);
-        pointerMap.set(e.pointerId, action);
-        setPressed(action, true);
-      });
-      btn.addEventListener('pointerup', e => {
-        const act = pointerMap.get(e.pointerId);
-        if (act) setPressed(act, false);
-        pointerMap.delete(e.pointerId);
-      });
-      btn.addEventListener('pointercancel', e => {
-        const act = pointerMap.get(e.pointerId);
-        if (act) setPressed(act, false);
-        pointerMap.delete(e.pointerId);
-      });
-      btn.addEventListener('pointerout', e => {
-        const act = pointerMap.get(e.pointerId);
-        if (act) setPressed(act, false);
-        pointerMap.delete(e.pointerId);
-      });
+      btn.addEventListener('pointerdown', e=>{ btn.setPointerCapture(e.pointerId); pointerMap.set(e.pointerId, action); pressed[action]=true; });
+      function up(e){ const act=pointerMap.get(e.pointerId); if(act) pressed[act]=false; pointerMap.delete(e.pointerId); }
+      ['pointerup','pointercancel','pointerout'].forEach(ev=> btn.addEventListener(ev, up));
     });
 
-    // ====== Game state ======
+    // ---------- Audio (music + sfx) ----------
+    let audioCtx=null, musicGain=null, sfxGain=null, musicOn=true, musicStarted=false;
+    function ensureAudio(){
+      if (audioCtx) return;
+      audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+      musicGain = audioCtx.createGain(); musicGain.gain.value = 0.12; musicGain.connect(audioCtx.destination);
+      sfxGain   = audioCtx.createGain(); sfxGain.gain.value = 0.18; sfxGain.connect(audioCtx.destination);
+      startMusic();
+    }
+    function startMusic(){
+      if (musicStarted || !audioCtx) return;
+      musicStarted = true;
+      // Tiny 80s-ish loop: bass + lead arpeggio
+      const tempo=120, beat=60/tempo;
+      const bassNotes=[48,48,55,48, 50,50,57,50]; // MIDI-ish
+      const lead=[72,76,79,76, 72,76,79,83];
+      const t0 = audioCtx.currentTime + 0.05;
+      function note(freq, dur, time, type='square', gain=0.15, dest=musicGain){
+        const o=audioCtx.createOscillator(); const g=audioCtx.createGain();
+        o.type=type; o.frequency.value=freq; o.connect(g); g.connect(dest);
+        g.gain.setValueAtTime(0, time); g.gain.linearRampToValueAtTime(gain, time+0.01); g.gain.linearRampToValueAtTime(0.0001, time+dur);
+        o.start(time); o.stop(time+dur+0.02);
+      }
+      function freq(n){ return 440*Math.pow(2,(n-69)/12); }
+      // schedule looped pattern
+      function scheduleLoop(){
+        let t = audioCtx.currentTime;
+        const base = Math.floor((t - t0)/(8*beat))*8*beat + t0 + 0.001;
+        for(let i=0;i<8;i++){
+          note(freq(bassNotes[i]), 0.45*beat, base + i*beat, 'square', 0.12);
+          // lead hits on eighths
+          note(freq(lead[i]), 0.25*beat, base + i*beat + 0.0*beat, 'triangle', 0.10);
+          note(freq(lead[i]), 0.25*beat, base + i*beat + 0.5*beat, 'triangle', 0.08);
+        }
+      }
+      setInterval(scheduleLoop, beat*1000*2);
+    }
+    function pickupChime(){
+      if(!audioCtx) return;
+      const o=audioCtx.createOscillator(), g=audioCtx.createGain();
+      o.type='triangle'; o.connect(g); g.connect(sfxGain);
+      const t=audioCtx.currentTime;
+      o.frequency.setValueAtTime(880,t); g.gain.setValueAtTime(0.001,t);
+      g.gain.linearRampToValueAtTime(0.3, t+0.02);
+      g.gain.exponentialRampToValueAtTime(0.001, t+0.25);
+      o.start(t); o.stop(t+0.3);
+    }
+    function whoops(){
+      if(!audioCtx) return;
+      const o=audioCtx.createOscillator(), g=audioCtx.createGain();
+      o.type='sawtooth'; o.connect(g); g.connect(sfxGain);
+      const t=audioCtx.currentTime;
+      o.frequency.setValueAtTime(600,t); o.frequency.exponentialRampToValueAtTime(180,t+0.35);
+      g.gain.setValueAtTime(0.001,t); g.gain.linearRampToValueAtTime(0.25,t+0.02); g.gain.exponentialRampToValueAtTime(0.001,t+0.35);
+      o.start(t); o.stop(t+0.4);
+    }
+    document.getElementById('mute').addEventListener('click', ()=>{
+      ensureAudio();
+      musicOn = !musicOn;
+      musicGain.gain.value = musicOn ? 0.12 : 0.0;
+      document.getElementById('mute').textContent = musicOn ? '🔊 Music' : '🔇 Music';
+    });
+
+    // ---------- HUD / round state ----------
     const timeEl = document.getElementById('time');
-    const scoreEl = document.getElementById('score');
-    const bestEl  = document.getElementById('best');
-    const msgEl   = document.getElementById('msg');
+    const scoreEl= document.getElementById('score');
+    const bestEl = document.getElementById('best');
+    const msgEl  = document.getElementById('msg');
     const startOverlay = document.getElementById('start');
-    const endOverlay = document.getElementById('end');
+    const endOverlay   = document.getElementById('end');
     const finalScoreEl = document.getElementById('finalScore');
-    const endMsgEl = document.getElementById('endMsg');
+    const endMsgEl     = document.getElementById('endMsg');
 
-    let score = 0;
-    let best = Number(localStorage.getItem('LYLA_GAME_HISCORE') || 0);
-    bestEl.textContent = best;
+    let score=0, best=Number(localStorage.getItem('LYLA_GAME_HISCORE')||0); bestEl.textContent=best;
+    let timer=90, running=false;
 
-    let timer = 90;
-    let running = false;
+    function setScore(s){ score=Math.max(0,s); scoreEl.textContent=score; }
+    function setTimer(t){ timer=t; timeEl.textContent=Math.max(0, Math.ceil(t)); }
 
-    function setScore(s) { score = s; scoreEl.textContent = s; }
-    function setTimer(t) { timer = t; timeEl.textContent = Math.max(0, Math.ceil(t)); }
-
-    function showFloatPlusOne(worldPos) {
-      const pos = worldPos.clone();
-      pos.project(camera);
-      const x = (pos.x * 0.5 + 0.5) * innerWidth;
-      const y = (-pos.y * 0.5 + 0.5) * innerHeight;
+    function floatText(txt, worldPos, color='#fff'){
+      const pos = worldPos.clone().project(camera);
+      const x = (pos.x*0.5+0.5)*innerWidth, y = (-pos.y*0.5+0.5)*innerHeight;
       const el = document.createElement('div');
-      el.className = 'float';
-      el.textContent = '+1';
-      el.style.left = (x-8) + 'px';
-      el.style.top = (y-8) + 'px';
-      document.body.appendChild(el);
-      let a = 0;
-      const id = setInterval(() => {
-        a += 1;
-        el.style.transform = 'translateY(' + (-a*1.2) + 'px)';
-        el.style.opacity = String(1 - a/40);
-        if (a >= 40) { clearInterval(id); el.remove(); }
-      }, 16);
+      el.className='float'; el.textContent=txt; el.style.left=(x-8)+'px'; el.style.top=(y-8)+'px'; el.style.color=color;
+      document.body.appendChild(el); let a=0; const id=setInterval(()=>{ a++; el.style.transform='translateY(' + (-a*1.2) + 'px)'; el.style.opacity=String(1-a/40); if(a>=40){clearInterval(id); el.remove();}},16);
     }
 
-    // Simple beep
-    let audioCtx = null;
-    function beep() {
-      if (!audioCtx) return;
-      const o = audioCtx.createOscillator();
-      const g = audioCtx.createGain();
-      o.type = 'triangle';
-      o.frequency.value = 880;
-      o.connect(g); g.connect(audioCtx.destination);
-      g.gain.value = 0.06;
-      o.start();
-      setTimeout(() => { o.stop(); }, 120);
-    }
-
-    // Fireworks
-    const fireworks = [];
-    function spawnFireworks(center = new THREE.Vector3(0,4,0), count = 60) {
-      for (let i=0;i<count;i++){
-        const m = new THREE.Mesh(new THREE.SphereGeometry(0.08, 8, 8), new THREE.MeshStandardMaterial({ color: new THREE.Color().setHSL(Math.random(), 0.7, 0.6) }));
-        m.position.copy(center);
-        scene.add(m);
-        fireworks.push({ m, v: new THREE.Vector3((Math.random()-0.5)*6, Math.random()*4+2, (Math.random()-0.5)*6), life: 1.6 });
-      }
-    }
-
-    // ====== Physics-ish ======
-    const vel = new THREE.Vector3();
-    let verticalVel = 0;
-    const GRAVITY = 10;
-
-    const baseAccel = 14;
-    const baseBrake = 18;
-    const baseFriction = 2.4;
-    const maxSpeed = 18;
-    const turnSpeed = 1.9;
-
-    function resetRound() {
-      setScore(0);
-      setTimer(90);
-      car.position.set(0, 0.5, 0);
-      car.rotation.set(0, 0, 0);
-      vel.set(0,0,0);
-      verticalVel = 0;
+    function resetRound(){
+      setScore(0); setTimer(90);
+      car.position.set(-R,0.5,0); car.rotation.set(0, Math.PI/2, 0); vel.set(0,0,0); verticalVel=0;
       placeSnacks();
-      msgEl.textContent = '';
+      pets.forEach(p=> scene.remove(p.mesh)); pets.length=0;
+      msgEl.textContent='';
     }
-
-    function begin() {
-      running = true;
-      resetRound();
-      startOverlay.style.display = 'none';
-      if (!audioCtx) {
-        try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) {}
-      }
+    function begin(){
+      running=true; resetRound(); startOverlay.style.display='none'; ensureAudio();
     }
-
-    function endRound() {
-      running = false;
-      finalScoreEl.textContent = score;
-      let text = '';
-      if (score > best) {
-        best = score;
-        localStorage.setItem('LYLA_GAME_HISCORE', String(best));
-        bestEl.textContent = best;
-        text = 'New high score!';
-        spawnFireworks(new THREE.Vector3(0,4,0), 80);
-      } else if (score === best && best > 0) {
-        text = 'You matched your best!';
-      } else {
-        text = 'Great driving!';
-      }
-      endMsgEl.textContent = text;
-      endOverlay.style.display = '';
-    }
-
     document.getElementById('startBtn').addEventListener('click', begin);
-    document.getElementById('againBtn').addEventListener('click', function() {
-      endOverlay.style.display = 'none';
-      begin();
-    });
+    document.getElementById('againBtn').addEventListener('click', ()=>{ endOverlay.style.display='none'; begin(); });
 
-    // Resize
-    addEventListener('resize', () => {
-      renderer.setSize(innerWidth, innerHeight);
-      camera.aspect = innerWidth/innerHeight;
-      camera.updateProjectionMatrix();
-    });
+    // ---------- Car physics (faster, snappier) ----------
+    const vel = new THREE.Vector3();
+    let verticalVel=0;
+    const GRAV=10;
+    const baseAccel=20, baseBrake=22, baseFriction=2.0, maxSpeed=28, turnSpeed=3.0;
 
-    // ====== Main loop ======
-    let last = performance.now();
-    function tick(now) {
-      const dt = Math.min(0.033, (now - last)/1000);
-      last = now;
+    function onRoad(x,z){
+      // near either ring centerline within roadWidth/2
+      const dl = Math.abs(new THREE.Vector2(x-leftC.x, z-leftC.z).length() - R);
+      const dr = Math.abs(new THREE.Vector2(x-rightC.x, z-rightC.z).length() - R);
+      const inCross = (Math.abs(x) < roadWidth*0.6 && Math.abs(z) < 2.2); // zebra overlap
+      return (dl < roadWidth*0.55) || (dr < roadWidth*0.55) || inCross;
+    }
 
-      // Fireworks
-      for (let i=fireworks.length-1; i>=0; i--) {
-        const f = fireworks[i];
-        f.life -= dt;
-        f.v.y -= GRAVITY*0.8*dt;
-        f.m.position.addScaledVector(f.v, dt);
-        f.m.material.emissive = new THREE.Color().setHSL(Math.random(), 0.7, 0.4);
-        f.m.material.emissiveIntensity = Math.max(0, f.life);
-        if (f.life <= 0) { scene.remove(f.m); fireworks.splice(i,1); }
+    // ---------- Main loop ----------
+    addEventListener('resize', ()=>{ renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix(); });
+
+    let last=performance.now();
+    function tick(now){
+      const dt=Math.min(0.033,(now-last)/1000); last=now;
+
+      // Pets spawn & move
+      if (running){ maybeSpawnPets(dt); }
+      for (let i=pets.length-1;i>=0;i--){
+        const p=pets[i]; if(!p.alive){ pets.splice(i,1); continue; }
+        p.t += dt*p.speed;
+        const pos = p.start.clone().lerp(p.end, p.t);
+        p.mesh.position.copy(pos);
+        if (p.t>=1){
+          // crossed safely
+          if (p.clean && running){ setScore(score+1); floatText('+1 Safe!', p.mesh.position, '#aaffaa'); pickupChime(); }
+          scene.remove(p.mesh); pets.splice(i,1);
+        }
       }
 
-      if (running) {
-        setTimer(timer - dt);
-        if (timer <= 0) {
-          setTimer(0);
-          endRound();
+      if (running){
+        setTimer(timer-dt);
+        if (timer<=0){ setTimer(0); running=false; finalScoreEl.textContent=score;
+          if (score>best){ best=score; localStorage.setItem('LYLA_GAME_HISCORE',String(best)); bestEl.textContent=best; endMsgEl.textContent='New high score!'; }
+          else if (score===best && best>0){ endMsgEl.textContent='You matched your best!'; }
+          else { endMsgEl.textContent='Great driving!'; }
+          endOverlay.style.display='';
         }
 
         // Input
-        const forward = keys.has('ArrowUp') || keys.has('KeyW') || pressed.accel;
-        const back    = keys.has('ArrowDown') || keys.has('KeyS') || pressed.brake;
-        const left    = keys.has('ArrowLeft') || keys.has('KeyA') || pressed.left;
-        const right   = keys.has('ArrowRight') || keys.has('KeyD') || pressed.right;
+        const forward = keys.has('ArrowUp')||keys.has('KeyW')||pressed.accel;
+        const back    = keys.has('ArrowDown')||keys.has('KeyS')||pressed.brake;
+        const left    = keys.has('ArrowLeft')||keys.has('KeyA')||pressed.left;
+        const right   = keys.has('ArrowRight')||keys.has('KeyD')||pressed.right;
 
-        // Obstacle modifiers
-        let accel = baseAccel, brake = baseBrake, friction = baseFriction;
-
-        // Ditches
-        for (let i=0;i<ditches.length;i++) {
-          const d = ditches[i];
-          const dx = car.position.x - d.x, dz = car.position.z - d.z;
-          const dist = Math.sqrt(dx*dx + dz*dz);
-          if (dist < d.r) {
-            const t = 1 - dist/d.r;
-            accel *= (0.55 + 0.2*t);
-            friction *= (1.6 + 1.0*t);
-          }
-        }
-        // Bumps
-        for (let i=0;i<bumps.length;i++) {
-          const b = bumps[i];
-          const dx = car.position.x - b.x, dz = car.position.z - b.z;
-          const dist = Math.sqrt(dx*dx + dz*dz);
-          if (dist < b.r * 0.9 && verticalVel <= 0.05 && Math.random() < 0.02) {
-            verticalVel += 2.0;
-          }
-        }
-        // Ramps
-        for (let i=0;i<ramps.length;i++) {
-          const r = ramps[i];
-          const dx = car.position.x - r.x, dz = car.position.z - r.z;
-          if (Math.abs(dx) < r.w && Math.abs(dz) < r.d && verticalVel <= 0.02) {
-            verticalVel = 4.0;
-            const fdir = new THREE.Vector3(0,0,1).applyQuaternion(car.quaternion);
-            vel.addScaledVector(fdir, 3.5);
-          }
-        }
+        // Surfacing: off-road slows you (encourages staying on track)
+        const onR = onRoad(car.position.x, car.position.z);
+        let accel = baseAccel*(onR?1.0:0.55);
+        let brake = baseBrake;
+        let friction = baseFriction*(onR?1.0:1.6);
 
         // Movement
         const forwardDir = new THREE.Vector3(0,0,1).applyQuaternion(car.quaternion);
-        if (forward) vel.addScaledVector(forwardDir, accel * dt);
-        if (back)    vel.addScaledVector(forwardDir, -brake * dt);
+        if (forward) vel.addScaledVector(forwardDir, accel*dt);
+        if (back)    vel.addScaledVector(forwardDir, -brake*dt);
 
-        // Speed/friction
-        if (vel.length() > maxSpeed) vel.setLength(maxSpeed);
+        // Speed cap & friction
+        if (vel.length()>maxSpeed) vel.setLength(maxSpeed);
         vel.multiplyScalar(1 - Math.min(friction*dt, 0.95));
 
-        // Steering
+        // Steering (assist at low speed)
         const steerInput = (right?1:0) - (left?1:0);
-        const speedFactor = THREE.Math.clamp ? THREE.Math.clamp(vel.length()/maxSpeed, 0, 1) : Math.min(1, Math.max(0, vel.length()/maxSpeed));
-        car.rotateY(-steerInput * turnSpeed * (0.3 + 0.7*speedFactor) * dt);
+        const speedFactor = Math.min(1, vel.length()/maxSpeed);
+        const assist = 0.6 + 0.4*speedFactor;
+        car.rotateY(-steerInput * turnSpeed * assist * dt);
 
-        // Apply motion
+        // Apply
         car.position.addScaledVector(vel, dt);
 
-        // Vertical motion
-        verticalVel -= GRAVITY * dt;
-        car.position.y += verticalVel * dt;
-        const groundY = 0.5;
-        if (car.position.y < groundY) {
-          car.position.y = groundY;
-          verticalVel = 0;
-        }
-
-        // Walls soft bounce
-        if (car.position.x < bounds.minX+0.9) { car.position.x = bounds.minX+0.9; vel.x = Math.abs(vel.x)*0.3; }
-        if (car.position.x > bounds.maxX-0.9) { car.position.x = bounds.maxX-0.9; vel.x = -Math.abs(vel.x)*0.3; }
-        if (car.position.z < bounds.minZ+0.9) { car.position.z = bounds.minZ+0.9; vel.z = Math.abs(vel.z)*0.3; }
-        if (car.position.z > bounds.maxZ-0.9) { car.position.z = bounds.maxZ-0.9; vel.z = -Math.abs(vel.z)*0.3; }
+        // Vertical (tiny hops on rough)
+        verticalVel -= GRAV*dt; car.position.y += verticalVel*dt; if (car.position.y<0.5){ car.position.y=0.5; verticalVel=0; }
 
         // Camera follow
-        const camOffset = new THREE.Vector3(0, 9, -14).applyQuaternion(car.quaternion);
-        const desired = car.position.clone().add(camOffset);
-        camera.position.lerp(desired, 1 - Math.pow(0.002, dt));
-        camera.lookAt(car.position.x, car.position.y + 1.2, car.position.z);
+        const camOffset=new THREE.Vector3(0,10,-18).applyQuaternion(car.quaternion);
+        const desired=car.position.clone().add(camOffset); camera.position.lerp(desired, 1-Math.pow(0.002,dt));
+        camera.lookAt(car.position.x, car.position.y+1.2, car.position.z);
 
-        // Snacks
-        for (let i=0;i<snacks.length;i++) {
-          const s = snacks[i];
-          if (!s.active) continue;
-          s.group.rotation.y += dt * s.spin;
-          if (s.group.position.distanceTo(car.position) < 1.4) {
-            s.active = false;
-            s.group.scale.setScalar(1.3);
-            setTimeout(function(){ s.group.visible = false; }, 80);
-            setScore(score + 1);
-            showFloatPlusOne(s.group.position.clone());
-            beep();
+        // Snack spin + pickup
+        for (let i=0;i<snacks.length;i++){
+          const s=snacks[i]; if(!s.active) continue;
+          s.group.rotation.y += dt*s.spin;
+          if (s.group.position.distanceTo(car.position) < 1.4){
+            s.active=false; s.group.scale.setScalar(1.3); setTimeout(()=>{ s.group.visible=false; }, 80);
+            setScore(score+1); floatText('+1', s.group.position); pickupChime();
           }
         }
 
-        if (Math.abs(steerInput) === 0 && vel.length() < 2 && timer > 85) {
-          msgEl.textContent = 'Hold GO and tap ◀ ▶ to steer';
-        } else {
-          msgEl.textContent = '';
+        // Pet collision
+        for (let i=0;i<pets.length;i++){
+          const p=pets[i]; if(!p.alive) continue;
+          const d = p.mesh.position.distanceTo(car.position);
+          if (d < 1.2){
+            p.alive=false; p.clean=false;
+            scene.remove(p.mesh);
+            setScore(score-1); floatText('–1', car.position, '#ffaaaa'); whoops();
+          } else if (d < 2.5){
+            p.clean=false; // near miss disables bonus (you were too close)
+          }
         }
+
+        // Gentle hint
+        if (vel.length()<2 && timer>85){ msgEl.textContent='Hold GO and tap ◀ ▶ to steer'; }
+        else { msgEl.textContent=''; }
       }
 
       renderer.render(scene, camera);
       requestAnimationFrame(tick);
     }
     requestAnimationFrame(tick);
+
+    // ---------- Sign outside walls ----------
+    const loader = new THREE.FontLoader();
+    loader.load('https://cdn.jsdelivr.net/npm/three@0.128.0/examples/fonts/helvetiker_regular.typeface.json', function(font){
+      const geom = new THREE.TextGeometry("Lyla's Game", { font, size: 2.2, height:0.5, bevelEnabled:true, bevelThickness:0.08, bevelSize:0.06, curveSegments:6, bevelSegments:3 });
+      const mat = new THREE.MeshStandardMaterial({ color:0xfff06b, emissive:0x332200, emissiveIntensity:0.35, metalness:0.2, roughness:0.4 });
+      const mesh = new THREE.Mesh(geom, mat); mesh.castShadow=true; mesh.position.set(-7.5,5, -36); mesh.rotation.y = 0; scene.add(mesh);
+    });
   </script>
 </body>
 </html>
