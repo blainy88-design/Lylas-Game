@@ -255,7 +255,7 @@
 
   addEventListener('resize', ()=>{ renderer.setSize(innerWidth, innerHeight); camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix(); });
 
-  const finishZ = -TRACK_LEN + 20;
+  
   const snacksRef = snacks, padsRef = pads; // use existing arrays from closures
 
   let last=performance.now();
