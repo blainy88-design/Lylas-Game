@@ -70,8 +70,7 @@
 
 <script>
 (() => {
-  /* ---------- Utilities ---------- */
-  const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
+  const clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
 
   /* ---------- Renderer / Scene / Camera ---------- */
   const renderer = new THREE.WebGLRenderer({antialias:true});
@@ -85,14 +84,14 @@
   scene.add(sky);
 
   const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 0.1, 5000);
-  camera.position.set(0,8,18);
+  camera.position.set(0,7.5,18);
 
   scene.add(new THREE.HemisphereLight(0xbcdcff, 0x2a2a30, 0.7));
   const sun = new THREE.DirectionalLight(0xffffff, 1.0);
   sun.position.set(80,100,60); sun.castShadow=true; sun.shadow.mapSize.set(2048,2048);
   scene.add(sun);
 
-  /* ---------- Texture helpers ---------- */
+  /* ---------- Textures ---------- */
   function mkTex(draw,w=256,h=256){const c=document.createElement('canvas'); c.width=w; c.height=h; const g=c.getContext('2d'); draw(g,c); const t=new THREE.CanvasTexture(c); t.anisotropy=8; return t;}
   const asphalt = mkTex((g,c)=>{g.fillStyle='#2c2f35'; g.fillRect(0,0,c.width,c.height); for(let i=0;i<1000;i++){g.fillStyle='rgba(255,255,255,'+(Math.random()*0.05)+')'; g.fillRect(Math.random()*c.width,Math.random()*c.height,1+Math.random()*2,1+Math.random()*2);}},256,256);
   asphalt.wrapS=asphalt.wrapT=THREE.RepeatWrapping; asphalt.repeat.set(8,300);
@@ -118,7 +117,7 @@
 
   /* ---------- Straight track ---------- */
   const ROAD_W   = 10;
-  const TRACK_LEN= 1650;     // ~75% original
+  const TRACK_LEN= 1650;
   const CLEAR    = 120;
 
   const road = new THREE.Mesh(new THREE.PlaneGeometry(ROAD_W, TRACK_LEN), new THREE.MeshStandardMaterial({map:asphalt, roughness:.95, metalness:.02}));
@@ -160,7 +159,7 @@
   check.rotation.x=-Math.PI/2; check.position.set(0,0.013,finishZ+.4); arch.add(check);
   scene.add(arch);
 
-  /* ---------- Car (visuals flipped so Up drives toward FINISH) ---------- */
+  /* ---------- Car (fixed forward; sits ON the road) ---------- */
   const car = new THREE.Group();
   const hull = new THREE.Group();
   car.add(hull);
@@ -179,8 +178,9 @@
   const trail = new THREE.Mesh(new THREE.PlaneGeometry(1.6,3.2), new THREE.MeshBasicMaterial({color:0x00fff7, transparent:true, opacity:0}));
   trail.rotation.x=-Math.PI/2; trail.position.set(0,0.01,1.0); hull.add(trail);
 
-  hull.rotation.y = Math.PI;           // flip visuals so “forward” faces FINISH
-  car.position.set(0,.6,10); scene.add(car);
+  hull.rotation.y = Math.PI;            // faces “forward”
+  car.position.set(0,0.46,10);          // 0.46 = wheel radius; sits on road
+  scene.add(car);
 
   /* ---------- Snacks ---------- */
   function snack(type){ const g=new THREE.Group();
@@ -219,7 +219,7 @@
     }
   })();
 
-  /* ---------- Input (single declaration) ---------- */
+  /* ---------- Input ---------- */
   const keys = new Set();
   addEventListener('keydown', e => { keys.add(e.code); });
   addEventListener('keyup',   e => { keys.delete(e.code); });
@@ -277,19 +277,20 @@
   let running=false, tStart=0, elapsed=0, score=0, best=Number(localStorage.getItem('LYLA_GAME_BESTTIME')||0);
   function fmt(t){return t.toFixed(2)} function setScore(s){score=s; scoreEl.textContent=s} function showBest(){bestEl.textContent=best>0?fmt(best)+'s':'—'} showBest();
 
-  /* ---------- Bicycle handling (stabilized) ---------- */
-  // State: heading=0 means forward down the street toward FINISH
-  let x=0, z=10, heading=0, v=0;
-  const L=2.3;
-  const ACCEL=40, BRAKE=36, ROLL=0.35, AIR=0.010, MAXSPEED=58;
-  const STEER_MAX=Math.PI/4;
-  let steer=0, steerIn=0, throttle=0, throttleIn=0;
+  /* ---------- Runner-style movement (no yaw) ---------- */
+  // Forward: toward FINISH (negative world-Z visually)
+  let x=0, z=10, v=0;       // forward speed
+  let vx=0;                 // lateral speed
+  const MAXSPEED=58, ACCEL=40, BRAKE=36, ROLL=0.35, AIR=0.010;
+  const LANE_SPEED=16;      // base lateral slide speed
   let boostTimer=0, spinTimer=0;
 
   function resetRace(){
     setScore(0); elapsed=0; boostTimer=0; spinTimer=0; trail.material.opacity=0;
-    x=0; z=10; heading=0; v=0; steer=steerIn=0; throttle=throttleIn=0;
-    car.position.set(x,.6,z); car.rotation.set(0,heading,0);
+    x=0; z=10; v=0; vx=0;
+    car.position.set(x,0.46,z); // sits on road
+    // face forward; no car yaw changes during play
+    car.rotation.y = 0;
   }
   function begin(){ running=true; resetRace(); startOverlay.style.display='none'; ensureAudio(); tStart=performance.now(); }
   document.getElementById('startBtn').addEventListener('click', begin);
@@ -297,70 +298,55 @@
 
   addEventListener('resize', ()=>{ renderer.setSize(innerWidth, innerHeight); camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix(); });
 
-  let last=performance.now();
+  let lastTick=performance.now();
   function tick(now){
-    const dt=Math.min(0.033,(now-last)/1000); last=now;
+    const dt=Math.min(0.033,(now-lastTick)/1000); lastTick=now;
 
     if(running){
       elapsed=(now-tStart)/1000; timeEl.textContent=fmt(elapsed);
 
-      // Inputs
       const fwd = keys.has('ArrowUp')||keys.has('KeyW')||pressed.accel;
       const back= keys.has('ArrowDown')||keys.has('KeyS')||pressed.brake;
       const left= keys.has('ArrowLeft')||keys.has('KeyA')||pressed.left;
       const right=keys.has('ArrowRight')||keys.has('KeyD')||pressed.right;
 
-      throttleIn = (fwd?1:0) - (back?1:0);
-      steerIn    = (right?1:0) - (left?1:0);
-
-      // Smooth inputs
-      const lerp=(a,b,k)=>a+(b-a)*(1-Math.pow(1-k,dt*60));
-      throttle = lerp(throttle, clamp(throttleIn,-1,1), .22);
-      steer    = lerp(steer,    clamp(steerIn,-1,1),   .28);
-
-      // Boost / spin
-      let max=MAXSPEED, accelScale=1, steerAssist=1;
+      // Forward accel/brake
+      const throttle = (fwd?1:0) - (back?1:0);
+      let max = MAXSPEED, accelScale=1;
       if(boostTimer>0){ boostTimer-=dt; max+=44; accelScale=1.75; trail.material.opacity=.5+.35*Math.sin(performance.now()*.02); }
       else trail.material.opacity=Math.max(0, trail.material.opacity-.05);
-      if(spinTimer>0){ spinTimer-=dt; steerAssist=.25; heading+=8*dt; v*=0.995; }
 
-      // Longitudinal dynamics
-      v += (ACCEL*accelScale* Math.max(0,throttle) - BRAKE*Math.max(0,-throttle)) * dt;
-      v *= Math.max(0, 1 - ROLL*dt);           // rolling resistance
-      v -= AIR * v*v * dt;                     // aero drag
+      v += (ACCEL*accelScale*Math.max(0,throttle) - BRAKE*Math.max(0,-throttle)) * dt;
+      v *= Math.max(0, 1 - ROLL*dt);
+      v -= AIR * v*v * dt;
       v = clamp(v, 0, max);
 
-      // Speed-scaled steering: less angle at speed
-      const speedN = Math.min(1, v/(MAXSPEED+44));         // includes boost range
-      const steerLimit = (0.75 - 0.55*speedN) * STEER_MAX; // 0.75..0.20 of MAX
-      const delta = steerAssist * clamp(steer,-1,1) * steerLimit;
+      // Lateral control (speed-scaled a touch so it’s not too twitchy when flying)
+      const speedN = Math.min(1, v/(MAXSPEED+44));
+      const lateralTarget = (right?1:0) - (left?1:0);
+      const lateralMax = LANE_SPEED * (0.8 + 0.2*(1-speedN));  // slightly less at top speed
+      vx += (lateralTarget*lateralMax - vx) * Math.min(1, dt*8); // critically-damped ease
 
-      // Yaw (with damping)
-      const yawRate = (v / L) * Math.tan(delta);
-      const damping = 1 - (0.35 * speedN);     // more damping when fast
-      heading += yawRate * damping * dt;
+      // Spin-out effect: brief uncontrollable wiggle
+      if(spinTimer>0){
+        spinTimer -= dt;
+        vx = Math.sin(now*0.04) * (LANE_SPEED*0.9); // sway
+        v *= 0.992;
+      }
 
-      // Forward vector (0 => down-track toward FINISH)
-      const dirX =  Math.sin(heading);
-      const dirZ = -Math.cos(heading);
-
-      // Cornering drag (tiny)
-      v *= 1 - 0.15 * Math.abs(delta/STEER_MAX) * dt;
-
-      // Integrate position
-      x += v * dirX * dt;
-      z += v * dirZ * dt;
+      // Integrate
+      x += vx * dt;
+      z -= v * dt;  // forward goes toward negative Z
 
       // keep on road
       x = clamp(x, -ROAD_W*.5, ROAD_W*.5);
 
-      // apply to mesh
-      car.position.set(x,.6,z);
-      car.rotation.y = heading;
+      // apply to car (no yaw)
+      car.position.set(x,0.46,z);
 
-      // camera behind car along -forward
-      const camTarget = new THREE.Vector3(x, 7.8, z).add(new THREE.Vector3(-dirX,0,-dirZ).multiplyScalar(15));
-      camera.position.lerp(camTarget, 1-Math.pow(0.0018,dt));
+      // camera sits behind the car
+      const camTarget = new THREE.Vector3(x, 7.5, z+16);
+      camera.position.lerp(camTarget, 1-Math.pow(0.002,dt));
       camera.lookAt(x, 1.2, z);
 
       // snacks
@@ -370,7 +356,7 @@
       // pads
       for(const p of pads){ if(!p.m.visible) continue;
         if(p.m.position.distanceTo(car.position)<2.2){
-          if(p.type==='boost'){ boostTimer=1.6; turbo(); } else { spinTimer=1.1; spinSfx(); }
+          if(p.type==='boost'){ boostTimer=1.6; turbo(); } else { spinTimer=1.0; spinSfx(); }
           p.m.visible=false;
         }
       }
