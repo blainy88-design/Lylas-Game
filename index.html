@@ -288,8 +288,8 @@
   let throttleIn=0, throttle=0;
   let boostTimer=0, spinTimer=0;
 
-  const keys = window.keys; // from earlier set
-  const pressedRef = pressed;
+  const pressedRef = pressed; // reuse the single `keys` Set declared earlier
+
 
   function resetRace(){
     setScore(0); elapsed=0; boostTimer=0; spinTimer=0; trail.material.opacity=0;
