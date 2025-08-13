@@ -157,20 +157,29 @@
   check.rotation.x=-Math.PI/2; check.position.set(0,0.013,finishZ+.4); arch.add(check);
   scene.add(arch);
 
-  /* ---------- Car (bicycle model; LYLA on the back) ---------- */
+  /* ---------- Car (visuals flipped so forward = toward finish) ---------- */
   const car = new THREE.Group();
-  const body = new THREE.Mesh(new THREE.BoxGeometry(2.1,.5,3.6), new THREE.MeshStandardMaterial({color:0x6ef0ff, metalness:.5, roughness:.3})); body.position.y=.6; body.castShadow=true; car.add(body);
-  const canopy = new THREE.Mesh(new THREE.SphereGeometry(.95,24,16), new THREE.MeshStandardMaterial({color:0x111, roughness:.7, metalness:.2})); canopy.scale.set(1.5,.65,1.15); canopy.position.set(0,1.05,.1); car.add(canopy);
-  function wheel(x,z){ const w=new THREE.Mesh(new THREE.CylinderGeometry(.46,.46,.32,22), new THREE.MeshStandardMaterial({color:'#222'})); w.rotation.z=Math.PI/2; w.position.set(x,.46,z); w.castShadow=true; car.add(w);}
+  const hull = new THREE.Group(); // visual holder we can flip
+  car.add(hull);
+
+  const body = new THREE.Mesh(new THREE.BoxGeometry(2.1,.5,3.6), new THREE.MeshStandardMaterial({color:0x6ef0ff, metalness:.5, roughness:.3}));
+  body.position.y=.6; body.castShadow=true; hull.add(body);
+  const canopy = new THREE.Mesh(new THREE.SphereGeometry(.95,24,16), new THREE.MeshStandardMaterial({color:0x111, roughness:.7, metalness:.2}));
+  canopy.scale.set(1.5,.65,1.15); canopy.position.set(0,1.05,.1); hull.add(canopy);
+  function wheel(x,z){ const w=new THREE.Mesh(new THREE.CylinderGeometry(.46,.46,.32,22), new THREE.MeshStandardMaterial({color:'#222'})); w.rotation.z=Math.PI/2; w.position.set(x,.46,z); w.castShadow=true; hull.add(w);}
   wheel(-.95,1.25); wheel(.95,1.25); wheel(-.95,-1.25); wheel(.95,-1.25);
 
-  // LYLA plate on BACK
+  // LYLA plate on BACK (readable from behind)
   function plateTex(){const c=document.createElement('canvas'); c.width=256;c.height=128;const g=c.getContext('2d'); g.fillStyle='#222'; g.fillRect(0,0,256,128); g.fillStyle='#fff'; g.font='bold 68px Arial'; g.textAlign='center'; g.textBaseline='middle'; g.fillText('LYLA',128,64); return new THREE.CanvasTexture(c);}
   const plate=new THREE.Mesh(new THREE.PlaneGeometry(1.3,.52), new THREE.MeshStandardMaterial({map:plateTex()}));
-  plate.position.set(0,.72,1.9); plate.rotation.y=0; car.add(plate);
+  plate.position.set(0,.72,-1.9); plate.rotation.y=Math.PI; hull.add(plate);
 
+  // Boost trail
   const trail = new THREE.Mesh(new THREE.PlaneGeometry(1.6,3.2), new THREE.MeshBasicMaterial({color:0x00fff7, transparent:true, opacity:0}));
-  trail.rotation.x=-Math.PI/2; trail.position.set(0,0.01,1.0); car.add(trail);
+  trail.rotation.x=-Math.PI/2; trail.position.set(0,0.01,1.0); hull.add(trail);
+
+  // Flip the whole visual hull 180° so “forward” points down-track
+  hull.rotation.y = Math.PI;
 
   car.position.set(0,.6,10); scene.add(car);
 
@@ -211,7 +220,7 @@
     }
   })();
 
-  /* ---------- Input (ONE declaration) ---------- */
+  /* ---------- Input (single declaration) ---------- */
   const keys = new Set();
   addEventListener('keydown', e => { keys.add(e.code); });
   addEventListener('keyup',   e => { keys.delete(e.code); });
@@ -270,10 +279,11 @@
   function fmt(t){return t.toFixed(2)} function setScore(s){score=s; scoreEl.textContent=s} function showBest(){bestEl.textContent=best>0?fmt(best)+'s':'—'} showBest();
 
   /* ---------- Bicycle-model handling ---------- */
-  let x=0, z=10, heading=0, v=0;      // car state
-  const L=2.2;
-  const ACCEL=38, BRAKE=34, FRICTION=1.6, MAXSPEED=54;
-  const STEER_MAX=Math.PI/5;
+  // Physics state (heading=0 means forward down the street toward FINISH)
+  let x=0, z=10, heading=0, v=0;
+  const L=2.2;                             // wheelbase
+  const ACCEL=38, BRAKE=34, FRICTION=1.6, MAXSPEED=54;  // faster base speed
+  const STEER_MAX=Math.PI/5;               // ~36°
   let steer=0, steerIn=0, throttle=0, throttleIn=0;
   let boostTimer=0, spinTimer=0;
 
@@ -288,6 +298,7 @@
 
   addEventListener('resize', ()=>{ renderer.setSize(innerWidth, innerHeight); camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix(); });
 
+  /* ---- main loop ---- */
   let last=performance.now();
   function tick(now){
     const dt=Math.min(0.033,(now-last)/1000); last=now;
@@ -315,10 +326,15 @@
       v += (ACCEL*accelScale* Math.max(0,throttle) - BRAKE*Math.max(0,-throttle)) * dt;
       v -= FRICTION*dt; if(v<0) v=0; if(v>max) v=max;
 
-      const delta = steerScale * STEER_MAX * steer;
-      heading += (v / L) * Math.tan(delta) * dt;
+      // Forward vector (heading=0 means down the street toward negative world-Z visually).
+      // Using flipped visuals, so physics forward is:
       const dirX =  Math.sin(heading);
       const dirZ = -Math.cos(heading);
+
+      // Bicycle yaw + integrate
+      const delta = steerScale * STEER_MAX * steer;
+      heading += (v / L) * Math.tan(delta) * dt;
+
       x += v * dirX * dt;
       z += v * dirZ * dt;
 
@@ -327,13 +343,16 @@
       car.position.set(x,.6,z);
       car.rotation.y = heading;
 
-      const camTarget = new THREE.Vector3(x, 7.8, z).add(new THREE.Vector3(-dirX,0,-dirZ).multiplyScalar(-15));
+      // Chase cam just behind the car along -forward
+      const camTarget = new THREE.Vector3(x, 7.8, z).add(new THREE.Vector3(-dirX,0,-dirZ).multiplyScalar(15));
       camera.position.lerp(camTarget, 1-Math.pow(0.0018,dt));
       camera.lookAt(x, 1.2, z);
 
+      // snacks
       for(const s of snacks){ if(!s.active) continue; s.g.rotation.y += dt*(s.spin||1);
         if(s.g.position.distanceTo(car.position)<1.35){ s.active=false; s.g.visible=false; setScore(score+1); ding(); } }
 
+      // pads
       for(const p of pads){ if(!p.m.visible) continue;
         if(p.m.position.distanceTo(car.position)<2.2){
           if(p.type==='boost'){ boostTimer=1.6; turbo(); } else { spinTimer=1.1; spinSfx(); }
@@ -341,6 +360,7 @@
         }
       }
 
+      // finish
       if(z <= finishZ + 1){
         running=false; finalTimeEl.textContent=fmt(elapsed); finalSnacksEl.textContent=String(score);
         if(best===0 || elapsed<best){ best=elapsed; localStorage.setItem('LYLA_GAME_BESTTIME', String(best)); endMsgEl.textContent='New best time!'; }
